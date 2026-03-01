@@ -39,7 +39,7 @@ Sistema automatizado de inteligencia de negocios para la empresa FutureLogistic 
 
 | Archivo | Consola | Menú | Automático | Uso recomendado |
 |---------|---------|------|------------|------------------|
-| `INICIAR.py` | ❌ No | ❌ No | ❌ No (solo manual) | Usuario final, doble clic |
+| `INICIAR.py` | ❌ No | ❌ No | ✅ Sí (cada 1 min) | Usuario final, doble clic |
 | `robot_sat_completo.py` | ✅ Sí | ✅ Sí | ✅ Sí (cada 1 min) | Depuración, pruebas |
 | `etl_cargar_excel.py` | Depende | ✅ Sí | ❌ No | Procesamiento de datos |
 
