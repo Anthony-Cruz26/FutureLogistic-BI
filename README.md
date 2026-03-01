@@ -6,13 +6,16 @@ Sistema automatizado de inteligencia de negocios para la empresa FutureLogistic 
 
 ## 📂 Archivos del Proyecto
 
-### 1. `INICIAR.py` - Robot Silencioso (Versión Final)
+### 1. `INICIAR.py` – Robot Silencioso (Versión Final)
+
 **Uso recomendado:** Para ejecución diaria con doble clic desde el escritorio.
 
-- ✅ Automatiza la descarga del reporte desde el SAT simulado
-- ✅ Ejecuta el ETL automáticamente al finalizar
-- ✅ **No muestra consola**, solo ventanas emergentes de éxito/error
-- ✅ Ideal para usuarios finales o para dejar programado
+- ✅ Automatiza la descarga del reporte desde el sistema SAT simulado.
+- ✅ Ejecuta el proceso ETL automáticamente al finalizar.
+- ✅ **No muestra ventana de consola**, solo ventanas emergentes de éxito o error.
+- ✅ Ideal para usuarios finales o para dejar ejecutándose de forma continua.
+- ✅ La ventana de consola se minimiza automáticamente al inicio.
+- ✅ Se ejecuta en un bucle infinito con intervalo de 1 minuto (ajustable).  
 
 ### 2. `robot_sat_completo.py` - Robot con Consola (Versión de Depuración)
 **Uso recomendado:** Para pruebas, depuración o cuando quieras ver los mensajes en tiempo real.
