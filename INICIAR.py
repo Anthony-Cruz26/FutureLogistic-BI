@@ -8,11 +8,22 @@
 Autor: Anthony Cruz
 Fecha: Febrero 2026
 Descripción:
-    Este script automatiza la descarga de reportes de despacho
-    desde el sistema SAT de FutureLogistic S.A. Inicia sesión,
-    navega al módulo de logística, ejecuta el reporte con fechas
-    específicas y descarga el archivo Excel. Luego ejecuta el ETL
-    para cargar los datos en SQL Server.
+    Este script automatiza la extracción, transformación y carga
+    (ETL) de los reportes de despacho generados por el sistema
+    SAT de FutureLogistic S.A. Realiza las siguientes tareas:
+
+    1. Inicia sesión automáticamente en el sistema SAT.
+    2. Navega al módulo de logística y ejecuta el reporte
+       de despachos con un rango de fechas predefinido.
+    3. Descarga el archivo Excel generado.
+    4. Ejecuta el proceso ETL que valida, transforma y carga
+       los datos en la base de datos SQL Server.
+    5. Muestra una ventana emergente indicando éxito o error.
+
+    El script está diseñado para ejecutarse en un bucle continuo
+    con un intervalo de 1 minuto, permitiendo una actualización
+    constante de los datos. La ventana de consola se minimiza
+    automáticamente al inicio para no interferir con el usuario.
 ============================================================
 """
 
@@ -34,28 +45,29 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 
 # ============================================================
-# CONFIGURACIÓN GENERAL (ajustar según el entorno)
+# MINIMIZAR VENTANA DE CONSOLA (al inicio)
+# ============================================================
+if sys.platform == "win32":
+    try:
+        ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 6)  # 6 = SW_MINIMIZE
+    except:
+        pass
+
+
+# ============================================================
+# CONFIGURACIÓN GENERAL
 # ============================================================
 class Config:
-    # Credenciales de acceso al SAT (simuladas)
     USUARIO = "supervisor"
     CONTRASENA = "distribucion2024"
-
-    # Ruta del archivo HTML que simula el SAT (local)
     RUTA_HTML = "C:/Users/yaps2/OneDrive - Ormesby Primary/Escritorio/SistemaSAT_Prueba/sap_futurelogistic.html"
     URL_SAT = f"file:///{RUTA_HTML.replace('\\', '/')}"
-
-    # Carpetas de trabajo
     CARPETA_REPORTES = "C:/Users/yaps2/OneDrive - Ormesby Primary/Escritorio/SistemaSAT_Prueba/REPORTES"
     CARPETA_DESCARGAS = os.path.join(os.path.expanduser("~"), "Downloads")
-
-    # Tiempos de espera (ajustados empíricamente)
     ESPERA_CARGA = 3
     ESPERA_LOGIN = 3
     ESPERA_DESCARGA = 20
     ESPERA_BOTON = 10
-
-    # Selectores CSS (obtenidos del HTML del SAT)
     SELECTORES = {
         'usuario': "input#loginUser",
         'contrasena': "input#loginPass",
@@ -69,21 +81,16 @@ class Config:
 # FUNCIONES AUXILIARES
 # ============================================================
 def guardar_log(paso, mensaje):
-    """
-    Guarda mensajes en un archivo de log para depuración.
-    Útil cuando el robot falla y no hay ventanas emergentes.
-    """
     try:
         ruta_log = "C:\\temp\\robot_log.txt"
         os.makedirs(os.path.dirname(ruta_log), exist_ok=True)
         with open(ruta_log, "a", encoding="utf-8") as f:
             f.write(f"{datetime.now().strftime('%H:%M:%S')} - {paso}: {mensaje}\n")
     except:
-        pass  # Si no se puede escribir, no detenemos el proceso
+        pass
 
 
 def mostrar_mensaje_exito():
-    """Ventana emergente cuando todo sale bien."""
     try:
         ctypes.windll.user32.MessageBoxW(
             0,
@@ -96,7 +103,6 @@ def mostrar_mensaje_exito():
 
 
 def mostrar_mensaje_error():
-    """Ventana emergente cuando algo falla."""
     try:
         ctypes.windll.user32.MessageBoxW(
             0,
@@ -109,20 +115,15 @@ def mostrar_mensaje_error():
 
 
 # ============================================================
-# FUNCIONES DE AUTOMATIZACIÓN CON SELENIUM
+# FUNCIONES DE AUTOMATIZACIÓN
 # ============================================================
 def crear_estructura_carpetas():
-    """Crea la carpeta REPORTES si no existe."""
     if not os.path.exists(Config.CARPETA_REPORTES):
         os.makedirs(Config.CARPETA_REPORTES, exist_ok=True)
     return True
 
 
 def iniciar_navegador():
-    """
-    Inicia Chrome con las opciones necesarias para evitar
-    detecciones de automatización y configurar descargas.
-    """
     try:
         opciones = Options()
         opciones.add_argument("--start-maximized")
@@ -131,8 +132,6 @@ def iniciar_navegador():
         opciones.add_argument("--disable-blink-features=AutomationControlled")
         opciones.add_experimental_option("excludeSwitches", ["enable-automation"])
         opciones.add_experimental_option("useAutomationExtension", False)
-
-        # Configurar carpeta de descargas
         preferencias = {
             "download.default_directory": Config.CARPETA_DESCARGAS,
             "download.prompt_for_download": False,
@@ -144,25 +143,19 @@ def iniciar_navegador():
             "profile.content_settings.exceptions.automatic_downloads.*.setting": 1
         }
         opciones.add_experimental_option("prefs", preferencias)
-
         servicio = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=servicio, options=opciones)
-        driver.execute_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        )
+        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         return driver
-    except Exception as e:
-        guardar_log("ERROR", f"No se pudo iniciar el navegador: {str(e)}")
+    except:
         return None
 
 
 def verificar_archivo_html():
-    """Verifica que el archivo HTML del SAT exista."""
     return os.path.exists(Config.RUTA_HTML)
 
 
 def navegar_al_sat(driver):
-    """Navega a la URL del SAT (local o remota)."""
     try:
         driver.get(Config.URL_SAT)
         time.sleep(Config.ESPERA_CARGA)
@@ -172,7 +165,6 @@ def navegar_al_sat(driver):
 
 
 def realizar_login(driver):
-    """Llena el formulario de login y hace clic en el botón."""
     try:
         time.sleep(2)
         campo_usuario = WebDriverWait(driver, Config.ESPERA_BOTON).until(
@@ -187,7 +179,6 @@ def realizar_login(driver):
 
         boton = driver.find_element(By.CSS_SELECTOR, Config.SELECTORES['boton_login'])
         boton.click()
-
         time.sleep(Config.ESPERA_LOGIN)
         return True
     except:
@@ -195,10 +186,6 @@ def realizar_login(driver):
 
 
 def establecer_fechas(driver):
-    """
-    Establece el rango de fechas para el reporte.
-    Por ahora son fijas, pero se puede modificar para que sean dinámicas.
-    """
     try:
         fecha_desde = "2024-10-15"
         fecha_hasta = "2024-10-16"
@@ -213,26 +200,18 @@ def establecer_fechas(driver):
 
 
 def descargar_reporte_excel(driver):
-    """
-    Busca el botón de exportar Excel, hace clic y espera a que
-    el archivo aparezca en la carpeta de descargas.
-    """
     try:
         time.sleep(3)
         boton = WebDriverWait(driver, Config.ESPERA_BOTON).until(
             EC.element_to_be_clickable((By.CSS_SELECTOR, Config.SELECTORES['boton_descarga']))
         )
-
-        # Tomar lista de archivos antes de la descarga
         archivos_antes = set()
         if os.path.exists(Config.CARPETA_DESCARGAS):
             for f in os.listdir(Config.CARPETA_DESCARGAS):
                 if f.lower().endswith((".xlsx", ".xls")):
                     archivos_antes.add(f)
-
         boton.click()
-        time.sleep(8)  # Espera generosa para que termine la descarga
-
+        time.sleep(8)
         archivo_descargado = monitorear_descarga(archivos_antes)
         if archivo_descargado:
             time.sleep(2)
@@ -243,9 +222,6 @@ def descargar_reporte_excel(driver):
 
 
 def monitorear_descarga(archivos_previos):
-    """
-    Monitorea la carpeta de descargas hasta que aparezca un archivo nuevo.
-    """
     try:
         inicio = time.time()
         while (time.time() - inicio) < Config.ESPERA_DESCARGA:
@@ -254,7 +230,6 @@ def monitorear_descarga(archivos_previos):
             for archivo in os.listdir(Config.CARPETA_DESCARGAS):
                 if archivo.lower().endswith(('.xlsx', '.xls')):
                     archivos_actuales.append(archivo)
-
             nuevos = [a for a in archivos_actuales if a not in archivos_previos]
             for archivo in nuevos:
                 ruta = os.path.join(Config.CARPETA_DESCARGAS, archivo)
@@ -272,30 +247,21 @@ def monitorear_descarga(archivos_previos):
 
 
 def procesar_archivo_descargado(nombre_archivo):
-    """
-    Mueve el archivo descargado de Downloads a REPORTES,
-    renombrándolo con un timestamp para evitar colisiones.
-    """
     try:
         origen = os.path.join(Config.CARPETA_DESCARGAS, nombre_archivo)
         if not os.path.exists(origen):
             return None
-
         if not os.path.exists(Config.CARPETA_REPORTES):
             os.makedirs(Config.CARPETA_REPORTES, exist_ok=True)
-
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         nombre_base, extension = os.path.splitext(nombre_archivo)
         nombre_final = f"SAT_{nombre_base}_{timestamp}{extension}"
         destino = os.path.join(Config.CARPETA_REPORTES, nombre_final)
-
-        # Evitar sobrescritura (por si acaso)
         contador = 1
         while os.path.exists(destino):
             nombre_final = f"SAT_{nombre_base}_{timestamp}_{contador}{extension}"
             destino = os.path.join(Config.CARPETA_REPORTES, nombre_final)
             contador += 1
-
         shutil.move(origen, destino)
         return destino
     except:
@@ -303,102 +269,63 @@ def procesar_archivo_descargado(nombre_archivo):
 
 
 def ejecutar_etl():
-    """
-    Ejecuta el script ETL en modo silencioso y captura su salida.
-    Retorna True si el ETL terminó con código 0 (éxito).
-    """
     try:
         ruta_etl = os.path.join(os.path.dirname(__file__), "etl_cargar_excel.py")
         if not os.path.exists(ruta_etl):
-            guardar_log("ETL", "Archivo no encontrado")
             return False
-
         resultado = subprocess.run(
             [sys.executable, ruta_etl, "--silent"],
             capture_output=True,
             text=True,
             creationflags=subprocess.CREATE_NO_WINDOW
         )
-
-        # Guardar salida por si hay que depurar
         with open("C:\\temp\\etl_salida.txt", "w", encoding="utf-8") as f:
             f.write(f"=== CÓDIGO ===\n{resultado.returncode}\n\n")
             f.write(f"=== STDOUT ===\n{resultado.stdout}\n\n")
             f.write(f"=== STDERR ===\n{resultado.stderr}\n")
-
-        guardar_log("ETL", f"Código retorno: {resultado.returncode}")
         return resultado.returncode == 0
-
-    except Exception as e:
-        guardar_log("ETL", f"Excepción: {str(e)}")
+    except:
         return False
 
 
 def ejecutar_descarga_completa():
-    """
-    Orquesta todo el proceso de descarga:
-    - Verifica HTML
-    - Inicia navegador
-    - Login
-    - Navegación
-    - Fechas
-    - Ejecución de reporte
-    - Descarga
-    - ETL
-    """
     driver = None
     try:
         if not verificar_archivo_html():
-            guardar_log("ERROR", "HTML no encontrado")
             return False
-
         driver = iniciar_navegador()
         if not driver:
             return False
-
         if not navegar_al_sat(driver):
             driver.quit()
             return False
-
         if not realizar_login(driver):
             driver.quit()
             return False
-
         time.sleep(3)
-
-        # Ir a la pantalla de logística y seleccionar reporte
         try:
             driver.execute_script("showScreen('logistics')")
             time.sleep(2)
             driver.execute_script("selectReport('ZFL_REP01')")
             time.sleep(2)
         except:
-            pass  # Si falla, continuamos (a veces ya está seleccionado)
-
+            pass
         if not establecer_fechas(driver):
             driver.quit()
             return False
-
         time.sleep(2)
-
-        # Ejecutar reporte
         try:
             driver.execute_script("ejecutarReporte()")
             time.sleep(5)
         except:
             pass
-
         if not descargar_reporte_excel(driver):
             driver.quit()
             return False
-
         driver.quit()
-
         if not ejecutar_etl():
             return False
-
         return True
-
     except:
         if driver:
             try:
@@ -406,6 +333,15 @@ def ejecutar_descarga_completa():
             except:
                 pass
         return False
+
+
+def tarea_cada_minuto():
+    """Ejecuta el proceso completo de descarga y ETL."""
+    if ejecutar_descarga_completa():
+        mostrar_mensaje_exito()
+    else:
+        mostrar_mensaje_error()
+    time.sleep(60)
 
 
 # ============================================================
@@ -418,7 +354,17 @@ if __name__ == "__main__":
     except:
         pass
 
-    if ejecutar_descarga_completa():
-        mostrar_mensaje_exito()
-    else:
-        mostrar_mensaje_error()
+    print("=" * 60)
+    print("🤖 ROBOT SAT INICIADO")
+    print("=" * 60)
+    print("Modo automático: cada 1 minuto")
+    print("La consola está minimizada.")
+    print("Para detener, cierra esta ventana o presiona Ctrl+C")
+    print("=" * 60)
+
+    try:
+        while True:
+            tarea_cada_minuto()
+    except KeyboardInterrupt:
+        print("\n🛑 Robot detenido por el usuario")
+        sys.exit(0)
