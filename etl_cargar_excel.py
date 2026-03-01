@@ -1,9 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
 """
-ETL - CARGA DE EXCEL A SQL SERVER (VERSIÓN FINAL CORREGIDA)
-Empresa: FutureLogistic S.A. - Durán, Ecuador
-Versión: 6.0 - CON RETORNO DE CÓDIGO DE SALIDA
+============================================================
+                    ETL - FUTURELOGISTIC
+============================================================
+Autor: Anthony Cruz
+Fecha: Febrero 2026
+Descripción:
+    Este script procesa los archivos Excel descargados por el robot,
+    los valida, busca los IDs correspondientes en las tablas de
+    dimensiones de SQL Server e inserta los registros en la tabla
+    de hechos hechos_despachos. También registra cada ejecución
+    en la tabla log_etl.
+
+    Puede ejecutarse en modo silencioso (--silent) para ser llamado
+    por los robots, o en modo interactivo con menú para depuración.
+============================================================
 """
 
 import os
@@ -15,18 +28,21 @@ from datetime import datetime
 import glob
 import shutil
 
+
 # ============================================================
 # CONFIGURACIÓN DE MODO SILENCIOSO
 # ============================================================
 MODO_SILENCIOSO = len(sys.argv) > 1 and sys.argv[1] == "--silent"
 
+
 def print_silent(*args, **kwargs):
-    """Print solo si no está en modo silencioso"""
+    """Imprime solo si NO está en modo silencioso."""
     if not MODO_SILENCIOSO:
         print(*args, **kwargs)
 
+
 # ============================================================
-# CONFIGURACIÓN
+# CONFIGURACIÓN GENERAL
 # ============================================================
 class Config:
     CARPETA_REPORTES = "C:/Users/yaps2/OneDrive - Ormesby Primary/Escritorio/SistemaSAT_Prueba/REPORTES"
@@ -35,10 +51,12 @@ class Config:
     BASE_DATOS = "FutureLogistic_BI"
     CONN_STR = f'DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={SERVIDOR};DATABASE={BASE_DATOS};Trusted_Connection=yes;'
 
+
 # ============================================================
-# FUNCIONES DE AYUDA
+# FUNCIONES DE CONEXIÓN Y LOG
 # ============================================================
 def conectar_bd():
+    """Intenta conectar a SQL Server y retorna la conexión."""
     try:
         conn = pyodbc.connect(Config.CONN_STR)
         print_silent(f"✅ Conectado a {Config.BASE_DATOS} en {Config.SERVIDOR}")
@@ -47,7 +65,11 @@ def conectar_bd():
         print_silent(f"❌ Error conectando a BD: {str(e)}")
         return None
 
+
 def registrar_log(conn, archivo, leidos, insertados, duplicados, errores, duracion, estado, mensaje):
+    """
+    Inserta un registro en la tabla log_etl con los resultados de la ejecución.
+    """
     try:
         cursor = conn.cursor()
         cursor.execute("""
@@ -60,11 +82,16 @@ def registrar_log(conn, archivo, leidos, insertados, duplicados, errores, duraci
     except Exception as e:
         print_silent(f"⚠️ Error registrando log: {str(e)}")
 
+
+# ============================================================
+# FUNCIONES DE BÚSQUEDA EN TABLAS DE DIMENSIONES
+# ============================================================
 def obtener_id_operador(conn, nombre_operador):
     cursor = conn.cursor()
     cursor.execute("SELECT id_operador FROM dim_operador WHERE nombre = ?", (nombre_operador,))
     row = cursor.fetchone()
     return row[0] if row else None
+
 
 def obtener_id_plataforma(conn, codigo_plataforma):
     cursor = conn.cursor()
@@ -72,11 +99,13 @@ def obtener_id_plataforma(conn, codigo_plataforma):
     row = cursor.fetchone()
     return row[0] if row else None
 
+
 def obtener_id_bodega(conn, codigo_bodega):
     cursor = conn.cursor()
     cursor.execute("SELECT id_bodega FROM dim_bodega WHERE codigo = ?", (codigo_bodega,))
     row = cursor.fetchone()
     return row[0] if row else None
+
 
 def obtener_id_cliente(conn, cadena, sucursal):
     cursor = conn.cursor()
@@ -87,6 +116,7 @@ def obtener_id_cliente(conn, cadena, sucursal):
     row = cursor.fetchone()
     return row[0] if row else None
 
+
 def obtener_id_producto(conn, tipo_azucar, presentacion):
     cursor = conn.cursor()
     cursor.execute("""
@@ -96,92 +126,100 @@ def obtener_id_producto(conn, tipo_azucar, presentacion):
     row = cursor.fetchone()
     return row[0] if row else None
 
+
 def guia_existe(conn, guia):
+    """Verifica si una guía de remisión ya existe en hechos_despachos."""
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM hechos_despachos WHERE guia_remision = ?", (guia,))
     return cursor.fetchone()[0] > 0
 
+
 # ============================================================
-# PROCESAR ARCHIVO EXCEL
+# PROCESAMIENTO DE UN ARCHIVO EXCEL
 # ============================================================
 def procesar_archivo(ruta_archivo):
+    """
+    Procesa un archivo Excel completo:
+    - Lee todas las filas
+    - Por cada fila, busca IDs en dimensiones
+    - Aplica lógica de negocio (cancelados, horas vacías)
+    - Inserta en hechos_despachos
+    Retorna True si no hubo errores.
+    """
     nombre_archivo = os.path.basename(ruta_archivo)
     print_silent(f"\n📄 Procesando: {nombre_archivo}")
-    
+
     inicio = time.time()
     conn = None
     exito = False
-    
+
     try:
         conn = conectar_bd()
         if not conn:
             return False
-        
-        # Leer Excel (hoja 1)
+
+        # Leer la primera hoja del Excel
         df = pd.read_excel(ruta_archivo, sheet_name=0)
         registros_leidos = len(df)
         print_silent(f"📊 Registros leídos: {registros_leidos}")
-        
+
         if registros_leidos == 0:
-            registrar_log(conn, nombre_archivo, 0, 0, 0, 0, 
-                         time.time() - inicio, "ADVERTENCIA", "Archivo vacío")
+            registrar_log(conn, nombre_archivo, 0, 0, 0, 0,
+                          time.time() - inicio, "ADVERTENCIA", "Archivo vacío")
             return True
-        
+
         insertados = 0
         duplicados = 0
         errores = 0
-        
+
         for idx, row in df.iterrows():
             try:
                 guia = row['GUIA_REMISION']
-                
+
+                # Evitar duplicados
                 if guia_existe(conn, guia):
                     duplicados += 1
                     continue
-                
-                # Obtener IDs
+
+                # Buscar IDs en dimensiones
                 id_operador = obtener_id_operador(conn, row['OPERADOR'])
                 if not id_operador:
                     print_silent(f"⚠️ Operador no encontrado: {row['OPERADOR']}")
                     errores += 1
                     continue
-                
+
                 id_plataforma = obtener_id_plataforma(conn, row['PLATAFORMA'])
                 if not id_plataforma:
                     print_silent(f"⚠️ Plataforma no encontrada: {row['PLATAFORMA']}")
                     errores += 1
                     continue
-                
+
                 id_bodega = obtener_id_bodega(conn, row['BODEGA_ORIGEN'])
                 if not id_bodega:
                     print_silent(f"⚠️ Bodega no encontrada: {row['BODEGA_ORIGEN']}")
                     errores += 1
                     continue
-                
+
                 id_cliente = obtener_id_cliente(conn, row['CLIENTE'], row['SUCURSAL'])
                 if not id_cliente:
                     print_silent(f"⚠️ Cliente no encontrado: {row['CLIENTE']} - {row['SUCURSAL']}")
                     errores += 1
                     continue
-                
+
                 id_producto = obtener_id_producto(conn, row['TIPO_AZUCAR'], row['PRESENTACION'])
                 if not id_producto:
                     print_silent(f"⚠️ Producto no encontrado: {row['TIPO_AZUCAR']} - {row['PRESENTACION']}")
                     errores += 1
                     continue
-                
-                # ====================================================
-                # LÓGICA DE NEGOCIO PARA HORAS Y TIEMPOS
-                # ====================================================
+
+                # Lógica de negocio: si está cancelado, hora_llegada = NULL, tiempo = 0
                 if row['ESTADO'] == 'CANCELADO':
-                    # Si está cancelado, forzar hora NULL y tiempo 0
                     hora_llegada = None
                     tiempo_ruta = 0
                 else:
-                    # Para otros estados, tomar valores del Excel (o NULL si vacío)
                     hora_llegada = None if pd.isna(row['HORA_LLEGADA']) else row['HORA_LLEGADA']
                     tiempo_ruta = 0 if pd.isna(row['TIEMPO_RUTA_MIN']) else row['TIEMPO_RUTA_MIN']
-                
+
                 # Insertar en hechos_despachos
                 cursor = conn.cursor()
                 cursor.execute("""
@@ -200,52 +238,61 @@ def procesar_archivo(ruta_archivo):
                 ))
                 conn.commit()
                 insertados += 1
-                
+
             except Exception as e:
                 print_silent(f"❌ Error fila {idx}: {str(e)}")
                 errores += 1
-        
+
         duracion = time.time() - inicio
-        
-        estado_log = "EXITO" if errores == 0 else "ERROR" if errores == registros_leidos else "ADVERTENCIA"
+
+        # Determinar estado del proceso
+        if errores == 0:
+            estado_log = "EXITO"
+        elif errores == registros_leidos:
+            estado_log = "ERROR"
+        else:
+            estado_log = "ADVERTENCIA"
+
         mensaje_log = f"Insertados: {insertados}, Duplicados: {duplicados}, Errores: {errores}"
-        
-        registrar_log(conn, nombre_archivo, registros_leidos, insertados, 
-                     duplicados, errores, duracion, estado_log, mensaje_log)
-        
+
+        registrar_log(conn, nombre_archivo, registros_leidos, insertados,
+                      duplicados, errores, duracion, estado_log, mensaje_log)
+
         print_silent(f"✅ Insertados: {insertados}")
         print_silent(f"🔄 Duplicados: {duplicados}")
         print_silent(f"❌ Errores: {errores}")
         print_silent(f"⏱️ Duración: {duracion:.2f} seg")
-        
-        exito = (errores == 0)  # Éxito si no hubo errores
+
+        exito = (errores == 0)
         return exito
-        
+
     except Exception as e:
         print_silent(f"❌ Error crítico: {str(e)}")
         if conn:
             duracion = time.time() - inicio
-            registrar_log(conn, nombre_archivo, 0, 0, 0, 0, 
-                         duracion, "ERROR", str(e))
+            registrar_log(conn, nombre_archivo, 0, 0, 0, 0,
+                          duracion, "ERROR", str(e))
         return False
-    
+
     finally:
         if conn:
             conn.close()
 
+
 # ============================================================
-# MOVER ARCHIVO PROCESADO
+# MOVER ARCHIVO A CARPETA PROCESADOS
 # ============================================================
 def mover_a_procesados(ruta_archivo):
+    """
+    Mueve el archivo ya procesado a la subcarpeta PROCESADOS,
+    agregando un timestamp al nombre para evitar colisiones.
+    """
     try:
-        if not os.path.exists(Config.CARPETA_PROCESADOS):
-            os.makedirs(Config.CARPETA_PROCESADOS)
-        
+        os.makedirs(Config.CARPETA_PROCESADOS, exist_ok=True)
         nombre = os.path.basename(ruta_archivo)
-        fecha_hora = datetime.now().strftime("%Y%m%d_%H%M%S")
-        nombre_nuevo = f"{fecha_hora}_{nombre}"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        nombre_nuevo = f"{timestamp}_{nombre}"
         destino = os.path.join(Config.CARPETA_PROCESADOS, nombre_nuevo)
-        
         shutil.move(ruta_archivo, destino)
         print_silent(f"📦 Archivo movido a: {destino}")
         return True
@@ -253,59 +300,73 @@ def mover_a_procesados(ruta_archivo):
         print_silent(f"⚠️ Error moviendo archivo: {str(e)}")
         return False
 
+
 # ============================================================
-# PROCESAR TODOS LOS ARCHIVOS
+# PROCESAR TODOS LOS ARCHIVOS DE LA CARPETA REPORTES
 # ============================================================
 def procesar_todos():
+    """
+    Itera sobre todos los archivos .xlsx y .xls en REPORTES,
+    los procesa uno por uno y los mueve a PROCESADOS.
+    Retorna True si todos se procesaron sin errores.
+    """
     print_silent("\n" + "=" * 60)
     print_silent("🚀 ETL - CARGA DE DATOS FUTURELOGISTIC")
     print_silent("=" * 60)
-    
+
     if not os.path.exists(Config.CARPETA_REPORTES):
         print_silent(f"❌ Carpeta no encontrada: {Config.CARPETA_REPORTES}")
         return False
-    
+
     archivos = glob.glob(os.path.join(Config.CARPETA_REPORTES, "*.xlsx"))
     archivos += glob.glob(os.path.join(Config.CARPETA_REPORTES, "*.xls"))
-    
+
     if not archivos:
         print_silent("📭 No hay archivos Excel para procesar")
-        return True  # No es error, solo no hay archivos
-    
+        return True  # No es un error, simplemente no hay archivos
+
     print_silent(f"📁 Encontrados: {len(archivos)} archivo(s)\n")
-    
+
     todos_exitosos = True
-    
+
     for archivo in archivos:
+        # Saltar si ya está en PROCESADOS (por si acaso)
         if "PROCESADOS" in archivo:
             continue
-        
+
         if procesar_archivo(archivo):
             mover_a_procesados(archivo)
         else:
             todos_exitosos = False
-        
+
         print_silent("-" * 40)
-    
+
     print_silent("\n✅ ETL COMPLETADO")
     return todos_exitosos
 
-# ============================================================
-# FUNCIÓN PARA MODO SILENCIOSO
-# ============================================================
-def ejecutar_etl_silencioso():
-    resultado = procesar_todos()
-    return resultado
 
 # ============================================================
-# MENÚ PRINCIPAL
+# FUNCIÓN PARA MODO SILENCIOSO (usada por los robots)
+# ============================================================
+def ejecutar_etl_silencioso():
+    """Versión para ser llamada desde los robots."""
+    return procesar_todos()
+
+
+# ============================================================
+# MENÚ PRINCIPAL (MODO INTERACTIVO)
 # ============================================================
 def main():
+    """
+    Punto de entrada principal.
+    Si se ejecuta con --silent, solo procesa y sale con código de retorno.
+    Si no, muestra el menú interactivo.
+    """
     if MODO_SILENCIOSO:
         exito = procesar_todos()
         sys.exit(0 if exito else 1)
         return
-    
+
     while True:
         print("\n" + "=" * 60)
         print("📊 ETL FUTURELOGISTIC - MENÚ PRINCIPAL")
@@ -316,18 +377,21 @@ def main():
         print("4. 🔍 Ver últimos logs")
         print("5. 🚪 Salir")
         print("=" * 60)
-        
+
         opcion = input("\n📝 Seleccione opción (1-5): ").strip()
-        
+
         if opcion == "1":
             procesar_todos()
             input("\n✅ Presione ENTER para continuar...")
+
         elif opcion == "2":
             if os.path.exists(Config.CARPETA_REPORTES):
                 os.startfile(Config.CARPETA_REPORTES)
+
         elif opcion == "3":
             if os.path.exists(Config.CARPETA_PROCESADOS):
                 os.startfile(Config.CARPETA_PROCESADOS)
+
         elif opcion == "4":
             try:
                 conn = conectar_bd()
@@ -340,12 +404,18 @@ def main():
             except Exception as e:
                 print(f"❌ Error: {str(e)}")
             input("\n✅ Presione ENTER para continuar...")
+
         elif opcion == "5":
             print("\n👋 ¡Hasta luego!")
             break
+
         else:
             print("\n❌ Opción no válida")
 
+
+# ============================================================
+# EJECUCIÓN PRINCIPAL
+# ============================================================
 if __name__ == "__main__":
     try:
         main()
